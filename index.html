@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Game List</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
+<style>
+  body { font-family: "Segoe UI", Roboto, sans-serif; background-color: #1e1e1e; color: #fff; margin: 0; padding: 0; }
+  header { background-color: #2b2b2b; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  header img { height: 40px; }
+  header input { padding: 8px 12px; border-radius: 6px; border: none; width: 200px; outline: none; }
+
+  .genres-bar { padding: 10px 20px; background: #252525; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .genre-btn { font-size: 12px; padding: 4px 10px; border-radius: 12px; background: #333; border: 1px solid #ff8c00; color: #ffb84d; cursor: pointer; transition: 0.2s; }
+  .genre-btn:hover { background: #ff8c00; color: #fff; }
+  .genre-btn.active { background: #ff8c00; color: #fff; }
+  .clear-btn { padding: 6px 12px; border: none; border-radius: 8px; background: #ff8c00; color: #fff; cursor: pointer; }
+
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .card { background-color: #2b2b2b; border-radius: 12px; overflow: hidden; transition: transform 0.2s; max-width: 300px; margin: 0 auto; }
+  .card:hover { transform: translateY(-4px); }
+  .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+  .card-content { padding: 10px 12px; }
+  .card h3 { margin: 6px 0; font-size: 15px; color: #fff; }
+  .game-id { color: #bbb; font-size: 13px; margin-bottom: 4px; }
+  .blink-button { animation: blink 1.2s infinite; background: rgba(255, 140, 0, 0.6); border: none; border-radius: 6px; padding: 2px 6px; color: #fff; font-weight: bold; font-size: 12px; cursor: pointer; box-shadow: 0 2px 0 rgba(204, 112, 0,0.7), 0 2px 4px rgba(0,0,0,0.3); transition: all 0.2s; backdrop-filter: blur(4px); }
+  .blink-button:hover { transform: translateY(-1px); box-shadow: 0 3px 0 rgba(204, 112, 0,0.7), 0 3px 6px rgba(0,0,0,0.4); }
+  .blink-button:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(204, 112, 0,0.7), 0 1px 2px rgba(0,0,0,0.2); }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+  .genres { margin-top: 6px; }
+  .genres span { font-size: 12px; color: #ffb84d; border: 1px solid #ff8c00; border-radius: 10px; padding: 2px 8px; margin-right: 5px; cursor: pointer; transition: background 0.2s; }
+  .genres span:hover { background: #ff8c00; color: #fff; }
+
+  #toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 8px 16px; border-radius: 6px; opacity: 0; transition: opacity 0.5s; }
+
+  /* 💻 Floating Laptop Widget */
+  #laptop-widget { position: fixed; right: 40px; bottom: 60px; width: 250px; height: 200px; z-index: 9999; animation: floaty 4s ease-in-out infinite; cursor: grab; transition: transform 0.2s ease; }
+  #laptop-widget:active { cursor: grabbing; }
+  @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  #laptop-widget img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  #total-line { position: absolute; left: 43%; top: 29%; transform: translateX(-50%); font-family: 'Press Start 2P', monospace; font-size: 13px; color: grey; text-align: center; pointer-events: none; }
+  #number-line { position: absolute; left: 50%; top: 35%; transform: translateX(-50%); font-family: 'Press Start 2P', monospace; font-size: 28px; color: white; text-shadow: 0 0 6px white, 0 0 12px #ccc; animation: blink 1s infinite; text-align: center; pointer-events: none; }
+  #number-line.off { color: rgba(255,140,0,0.2); text-shadow: none; animation: none; }
+  #games-line { position: absolute; left: 56%; top: 49%; transform: translateX(-50%); font-family: 'Press Start 2P', monospace; font-size: 13px; color: grey; text-align: center; pointer-events: none; }
+  #laptop-widget.clicked { animation: clickBounce 0.4s ease forwards; }
+  @keyframes clickBounce { 0% { transform: translateY(0) scale(1); } 50% { transform: translateY(-10px) scale(1.1); } 100% { transform: translateY(0) scale(1); } }
+</style>
+</head>
+
+<body>
+<header>
+  <img src="images/logo.jpg" alt="Logo">
+  <input type="text" id="search" placeholder="Search game...">
+</header>
+
+<div class="genres-bar">
+  <button class="clear-btn" id="clearFilter" style="display:none;">🔙 Show All Games</button>
+  <div id="genreList"></div>
+</div>
+
+<main id="gameList"></main>
+<div id="toast">Copied!</div>
+
+<!-- 💻 Laptop Widget -->
+<div id="laptop-widget">
+  <img src="https://png.pngtree.com/png-vector/20250321/ourmid/pngtree-laptop-mockup-with-orange-screen-png-image_15820338.png" alt="Laptop Icon">
+  <div id="total-line">TOTAL</div>
+  <div id="number-line">0</div>
+  <div id="games-line">GAMES</div>
+</div>
+
+<script>
+let GAMES = [];
+let selectedGenre = null;
+
+const SAMPLE = [
+  { id: "8626", title: "Black Myth: Wukong", genres: ["Action", "RPG", "Souls-like"], image: "https://cdn.cloudflare.steamstatic.com/steam/apps/2358720/header.jpg" },
+  { id: "6933", title: "ELDEN RING", genres: ["RPG", "Souls-like", "Adventure"], image: "https://cdn.cloudflare.steamstatic.com/steam/apps/1245620/header.jpg" },
+  { id: "8152", title: "Cyberpunk 2077", genres: ["Action", "RPG", "Open World"], image: "https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/header.jpg" }
+];
+
+// ✅ 修改后的加载逻辑：优先使用 localStorage
+async function loadGames(){
+  try {
+    const local = localStorage.getItem("customGameList");
+    if (local) {
+      console.log("✅ Loaded customGameList from localStorage");
+      GAMES = JSON.parse(local);
+    } else {
+      console.log("ℹ️ Loading from games.json (no local custom data)");
+      const r = await fetch('games.json?t='+Date.now());
+      const js = await r.json();
+      GAMES = js.map(g => ({
+        id: String(g.id),
+        title: g.title || g.name || '',
+        genres: g.genres || g.genre || [],
+        image: g.image || g.header_image || ''
+      }));
+    }
+  } catch(err){
+    console.error("❌ Failed to load games:", err);
+    GAMES = SAMPLE;
+  }
+  buildGenreList();
+  renderFilters();
+  applyFilters();
+}
+
+function buildGenreList(){
+  const excludedGenres = new Set(["Massively Multiplayer","Free To Play","Early Access"]);
+  const allGenres = new Set();
+  GAMES.forEach(g => g.genres.forEach(ge => { if(!excludedGenres.has(ge)) allGenres.add(ge); }));
+  const container = document.getElementById("genreList");
+  container.innerHTML = '';
+  [...allGenres].sort().forEach(ge => {
+    const btn = document.createElement('button');
+    btn.className = 'genre-btn';
+    btn.textContent = ge;
+    btn.onclick = () => toggleGenre(ge);
+    container.appendChild(btn);
+  });
+}
+
+function toggleGenre(g){ selectedGenre = (selectedGenre === g) ? null : g; renderFilters(); applyFilters(); }
+function renderFilters(){ document.querySelectorAll('.genre-btn').forEach(btn=>btn.classList.toggle('active', btn.textContent === selectedGenre)); document.getElementById('clearFilter').style.display = selectedGenre ? 'inline-block' : 'none'; }
+document.getElementById('clearFilter').onclick = ()=>{ selectedGenre = null; renderFilters(); applyFilters(); }
+
+function applyFilters(){
+  const search = document.getElementById('search').value.toLowerCase();
+  const filtered = GAMES.filter(g=>{
+    const matchSearch = g.title.toLowerCase().includes(search) || g.id.includes(search);
+    const matchGenre = !selectedGenre || g.genres.includes(selectedGenre);
+    return matchSearch && matchGenre;
+  });
+  renderGames(filtered);
+}
+
+function renderGames(list){
+  const container = document.getElementById('gameList');
+  container.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  list.forEach(g=>{
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<img src="${g.image}" alt="${g.title} cover image"><div class="card-content"><h3>${g.title}</h3><div class="game-id">GAME ID [ <button class="blink-button" data-id="${g.id}">${g.id}</button> ]</div><div class="genres">Genres: ${g.genres.map(ge=>`<span data-genre="${ge}">${ge}</span>`).join(' ')}</div></div>`;
+    fragment.appendChild(card);
+  });
+  container.appendChild(fragment);
+  container.querySelectorAll('.game-id button').forEach(btn=>btn.addEventListener('click',()=>copyID(btn.dataset.id)));
+  container.querySelectorAll('.genres span').forEach(span=>span.addEventListener('click',()=>toggleGenre(span.dataset.genre)));
+  updateLaptopWidgetCount(list.length);
+}
+
+function copyID(id){ navigator.clipboard.writeText(`/get ${id}`); const toast=document.getElementById('toast'); toast.textContent=`Copied: /get ${id}`; toast.style.opacity=1; setTimeout(()=>toast.style.opacity=0,1500); }
+function updateLaptopWidgetCount(c){ document.getElementById('number-line').textContent=c; }
+
+document.getElementById('search').addEventListener('input', applyFilters);
+
+// 💻 Laptop widget
+const widget=document.getElementById('laptop-widget');
+const numberLine=document.getElementById('number-line');
+widget.addEventListener('click',()=>{ numberLine.classList.toggle('off'); widget.classList.add('clicked'); setTimeout(()=>widget.classList.remove('clicked'),400); });
+
+// 拖动浮动窗口
+let isDragging=false, offsetX=0, offsetY=0;
+function startDrag(x,y){ isDragging=true; offsetX=x-widget.offsetLeft; offsetY=y-widget.offsetTop; widget.style.animation='none'; }
+function dragMove(x,y){ if(!isDragging)return; let newX=x-offsetX, newY=y-offsetY; widget.style.left=newX+'px'; widget.style.top=newY+'px'; }
+function endDrag(){ isDragging=false; widget.style.animation='floaty 4s ease-in-out infinite'; }
+widget.addEventListener('mousedown',e=>startDrag(e.clientX,e.clientY));
+document.addEventListener('mousemove',e=>dragMove(e.clientX,e.clientY));
+document.addEventListener('mouseup',endDrag);
+widget.addEventListener('touchstart',e=>{const t=e.touches[0];startDrag(t.clientX,t.clientY);});
+document.addEventListener('touchmove',e=>{const t=e.touches[0];dragMove(t.clientX,t.clientY);});
+document.addEventListener('touchend',endDrag);
+
+loadGames();
+</script>
+</body>
+</html>

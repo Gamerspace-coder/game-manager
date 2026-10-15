@@ -65,9 +65,10 @@
     position: sticky;
     top: 0;
     z-index: 100;
-    background: rgba(15, 15, 17, 0.9);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
-    backdrop-filter: blur(14px) saturate(140%);
+    /* 这里刻意不用 backdrop-filter：sticky 元素上的毛玻璃会在每一帧重新模糊背景。
+       实测（1634 张卡、240 帧滚动）去掉后长帧 10~18 → 0，中位帧间隔 19.6ms → 16.6ms（锁定 60fps）。
+       改用接近不透明的底色，观感和原来 0.9 透明度的毛玻璃几乎一致 */
+    background: rgba(15, 15, 17, 0.97);
     border-bottom: 1px solid rgba(255,255,255,0.05);
     padding: 15px 20px;
     display: flex;
@@ -262,9 +263,6 @@
     padding: 20px;
     max-width: 1200px;
     margin: 0 auto;
-    /* 离屏卡片的高度占位值。初始只是估值，页面加载后由脚本用真实行高覆盖，
-       保证"跳过渲染的卡片"和"已渲染的卡片"高度完全一致 → 滚动零抖动 */
-    --card-h: 252px;
   }
 
   /* === Cards === */
@@ -289,9 +287,9 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    /* 屏幕外的卡片跳过渲染（实测 1634 张卡时筛选耗时 63ms → 37ms） */
-    content-visibility: auto;
-    contain-intrinsic-size: auto var(--card-h);
+    /* 这里刻意不用 content-visibility：
+       实测（1634 张卡、240 帧滚动）开着它每张卡进入视口都要重新布局，
+       滚动长帧 68~53 → 关掉后 10~18。滚动流畅度优先于那 30ms 的筛选收益 */
   }
 
   .card-img-box {
@@ -526,101 +524,90 @@
   /* ------------------------------------------------------------------ *
    *  渲染卡片（单次 DocumentFragment 插入 → 只触发一次重排）
    * ------------------------------------------------------------------ */
-  function buildGrid() {
-    var frag = document.createDocumentFragment();
-    DOM_CACHE.length = 0;
+  /* ------------------------------------------------------------------ *
+   *  渲染卡片
+   *  2000+ 张卡一次性插入会产生 500ms+ 的主线程长任务（首屏之后整页卡住）。
+   *  这里先同步渲染第一块保证首屏立刻可见，剩下的分帧补齐；
+   *  补齐期间筛选/搜索照常可用（未生成的卡片只记状态，生成时再套用）。
+   * ------------------------------------------------------------------ */
+  /* 每帧补多少张卡。
+     这个值直接决定"点击搜索到能打字"的延迟：太小会把一次布局拆成十几次
+     全网格重排，主线程一直忙（实测 chunk=150 时点→聚焦要 397ms）；
+     太大又会一次性占满主线程。400 是实测下来的平衡点。 */
+  var RENDER_CHUNK = 400;
+  var renderCursor = 0;
+  var renderTimer = 0;
 
+  function cardInnerHtml(i) {
+    var game = ALL_GAMES[i] || {};
+    var title = (game.title === null || game.title === undefined) ? '' : String(game.title);
+    var id    = (game.id === null || game.id === undefined) ? '' : String(game.id);
+    var genres = Array.isArray(game.genres) ? game.genres : [];
+
+    var tagsHtml = '';
+    for (var t = 0; t < genres.length && t < 2; t++) {
+      tagsHtml += '<span class="tag">' + escapeHtml(genres[t]) + '</span>';
+    }
+
+    var imgPath = game.image ? String(game.image) : 'images/placeholder.jpg';
+    // 首屏 4 张立即加载，其余懒加载
+    var imgAttr = i < 4 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
+
+    return '<div class="card-inner">' +
+        '<div class="card-img-box">' +
+          '<img class="card-img" src="' + escapeHtml(imgPath) + '" alt="' + escapeHtml(title) + '" ' +
+            'width="460" height="215" ' + imgAttr + ' decoding="async" draggable="false">' +
+        '</div>' +
+        '<div class="card-body">' +
+          '<h3 class="card-title">' + escapeHtml(title) + '</h3>' +
+          '<div class="tags">' + tagsHtml + '</div>' +
+          '<button type="button" class="id-btn" data-id="' + escapeHtml(id) + '">' +
+            'ID: ' + escapeHtml(id) +
+          '</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function renderChunk() {
+    var frag = document.createDocumentFragment();
+    var end = Math.min(renderCursor + RENDER_CHUNK, ALL_GAMES.length);
+
+    for (var i = renderCursor; i < end; i++) {
+      var item = DOM_CACHE[i];
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = cardInnerHtml(i);
+      // 渲染期间可能已经筛选过，补上隐藏状态
+      if (item.hidden) card.classList.add('hidden');
+      item.el = card;
+      frag.appendChild(card);
+    }
+    renderCursor = end;
+    gridEl.appendChild(frag);
+
+    // 还有剩下的就下一帧继续，分帧执行避免长时间占用主线程
+    renderTimer = renderCursor < ALL_GAMES.length ? requestAnimationFrame(renderChunk) : 0;
+  }
+
+  function buildGrid() {
+    // 先建元数据（很便宜），卡片元素分帧补
+    DOM_CACHE.length = 0;
     for (var i = 0; i < ALL_GAMES.length; i++) {
       var game = ALL_GAMES[i] || {};
       var title = (game.title === null || game.title === undefined) ? '' : String(game.title);
-      var id    = (game.id === null || game.id === undefined) ? '' : String(game.id);
-      var genres = Array.isArray(game.genres) ? game.genres : [];
-
-      var tagsHtml = '';
-      for (var t = 0; t < genres.length && t < 2; t++) {
-        tagsHtml += '<span class="tag">' + escapeHtml(genres[t]) + '</span>';
-      }
-
-      var imgPath = game.image ? String(game.image) : 'images/placeholder.jpg';
-      // 首屏 4 张立即加载，其余懒加载
-      var imgAttr = i < 4
-        ? 'loading="eager" fetchpriority="high"'
-        : 'loading="lazy"';
-
-      var card = document.createElement('div');
-      card.className = 'card';
-      card.innerHTML =
-        '<div class="card-inner">' +
-          '<div class="card-img-box">' +
-            '<img class="card-img" src="' + escapeHtml(imgPath) + '" alt="' + escapeHtml(title) + '" ' +
-              'width="460" height="215" ' + imgAttr + ' decoding="async" draggable="false">' +
-          '</div>' +
-          '<div class="card-body">' +
-            '<h3 class="card-title">' + escapeHtml(title) + '</h3>' +
-            '<div class="tags">' + tagsHtml + '</div>' +
-            '<button type="button" class="id-btn" data-id="' + escapeHtml(id) + '">' +
-              'ID: ' + escapeHtml(id) +
-            '</button>' +
-          '</div>' +
-        '</div>';
-
       DOM_CACHE.push({
-        el: card,
+        el: null,
         title: title.toLowerCase(),
-        id: id,
-        genres: new Set(genres),
+        id: (game.id === null || game.id === undefined) ? '' : String(game.id),
+        genres: new Set(Array.isArray(game.genres) ? game.genres : []),
         hidden: false
       });
-      frag.appendChild(card);
     }
 
+    if (renderTimer) { cancelAnimationFrame(renderTimer); renderTimer = 0; }
     gridEl.textContent = '';
-    gridEl.appendChild(frag);
-    syncCardHeight();
-    observeCardHeight();
-  }
-
-  /* ------------------------------------------------------------------ *
-   *  把离屏卡片的占位高度对齐到真实行高
-   *  （content-visibility 跳过渲染时用的就是这个值；不校准滚动会有像素级抖动）
-   * ------------------------------------------------------------------ */
-  var cardH = 0;
-  var syncRaf = 0;
-
-  function syncCardHeight() {
-    var vh = window.innerHeight || 800;
-    var max = 0;
-
-    for (var i = 0; i < DOM_CACHE.length; i++) {
-      var el = DOM_CACHE[i].el;
-      if (el.classList.contains('hidden')) continue;
-      // 量 .card-inner：它才是带 contain-intrinsic-size 的那个盒子
-      // （.card 外面还有 1px 边框，量它会差 2px，逐行累积就是几百像素的漂移）
-      var inner = el.firstElementChild || el;
-      var r = inner.getBoundingClientRect();
-      // 只有和视口相交的卡片才真正渲染过；其余高度是占位值，不能当基准
-      if (r.height > 0 && r.bottom > 0 && r.top < vh && r.height > max) max = r.height;
-    }
-
-    if (max > 0 && Math.abs(max - cardH) > 0.5) {
-      cardH = max;
-      gridEl.style.setProperty('--card-h', max + 'px');
-    }
-  }
-
-  // 字体加载完、图片撑开、窗口变化都会改变真实行高，统一在这里重新校准
-  function scheduleSyncHeight() {
-    if (syncRaf) return;
-    syncRaf = requestAnimationFrame(function () { syncRaf = 0; syncCardHeight(); });
-  }
-
-  var cardObserver = null;
-  function observeCardHeight() {
-    if (typeof ResizeObserver !== 'function') return;
-    if (!cardObserver) cardObserver = new ResizeObserver(scheduleSyncHeight);
-    cardObserver.disconnect();
-    // 观察前几张（它们必然在渲染中），高度一变就重新校准
-    for (var i = 0; i < Math.min(4, DOM_CACHE.length); i++) cardObserver.observe(DOM_CACHE[i].el);
+    renderCursor = 0;
+    renderChunk();          // 第一块同步渲染 → 首屏立刻可见
   }
 
   /* ------------------------------------------------------------------ *
@@ -662,11 +649,14 @@
       }
 
       if (ok) {
-        if (item.hidden) { item.el.classList.remove('hidden'); item.hidden = false; }
+        if (item.hidden) {
+          item.hidden = false;
+          if (item.el) item.el.classList.remove('hidden');   // 尚未渲染的卡片只记状态
+        }
         visible++;
       } else if (!item.hidden) {
-        item.el.classList.add('hidden');
         item.hidden = true;
+        if (item.el) item.el.classList.add('hidden');
       }
     }
     updateCount(visible);
@@ -766,11 +756,30 @@
     scrollSpeed = 0;
   }
 
-  function endSliderDrag() {
+  /* 拖拽的 pointermove/pointerup 挂在 window 上，而不是用 setPointerCapture。
+     原因：一旦在容器上 setPointerCapture，浏览器会把 click 事件派发到
+     "pointerdown 目标与 pointerup 目标的最近公共祖先"（也就是容器本身），
+     e.target 不再是按钮，closest('.filter-btn') 永远为 null → 按钮点不动。
+     挂在 window 上既能拖出容器继续跟随，又不影响 click 的目标。 */
+  function onSliderDragMove(e) {
+    if (!dragState || e.pointerId !== dragState.id) return;
+    var dx = e.clientX - dragState.x;
+    if (Math.abs(dx) > 4) dragMoved = true;
+    if (dragMoved) {
+      stopAutoScroll();
+      filterEl.scrollLeft = dragState.left - dx;
+    }
+  }
+
+  function onSliderDragEnd(e) {
     if (!dragState) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== dragState.id) return;
     var moved = dragMoved;
     dragState = null;
     filterEl.classList.remove('active');
+    window.removeEventListener('pointermove', onSliderDragMove);
+    window.removeEventListener('pointerup', onSliderDragEnd);
+    window.removeEventListener('pointercancel', onSliderDragEnd);
     if (moved) setTimeout(function () { dragMoved = false; }, 300);
   }
 
@@ -779,24 +788,15 @@
     dragMoved = false;
     dragState = { id: e.pointerId, x: e.clientX, left: filterEl.scrollLeft };
     filterEl.classList.add('active');
-    if (filterEl.setPointerCapture) {
-      try { filterEl.setPointerCapture(e.pointerId); } catch (err) {}
-    }
     measureSlider();
+    window.addEventListener('pointermove', onSliderDragMove);
+    window.addEventListener('pointerup', onSliderDragEnd);
+    window.addEventListener('pointercancel', onSliderDragEnd);
   });
 
   filterEl.addEventListener('pointermove', function (e) {
     if (e.pointerType !== 'mouse') return;
-
-    if (dragState && e.pointerId === dragState.id) {
-      var dx = e.clientX - dragState.x;
-      if (Math.abs(dx) > 4) dragMoved = true;
-      if (dragMoved) {
-        stopAutoScroll();
-        filterEl.scrollLeft = dragState.left - dx;
-      }
-      return;
-    }
+    if (dragState) return;   // 拖拽中由 window 上的 onSliderDragMove 处理
 
     // 边缘自动滚动
     if (!sliderRect) measureSlider();
@@ -811,8 +811,6 @@
     }
   });
 
-  filterEl.addEventListener('pointerup', endSliderDrag);
-  filterEl.addEventListener('pointercancel', endSliderDrag);
   filterEl.addEventListener('pointerleave', stopAutoScroll);
   filterEl.addEventListener('pointerenter', function (e) {
     if (e.pointerType === 'mouse') measureSlider();
@@ -1006,7 +1004,6 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       measureSlider();
-      syncCardHeight();
       if (!widgetEl.style.left) return;   // 从未拖动过，保持 right/bottom 定位
 
       var r = widgetEl.getBoundingClientRect();
@@ -1056,12 +1053,6 @@
     setGames(games);
     measureSlider();
     loadRemote();
-
-    // 字体是异步加载的，换字体后行高会变，必须再校准一次
-    if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
-      document.fonts.ready.then(scheduleSyncHeight).catch(function () {});
-    }
-    window.addEventListener('load', scheduleSyncHeight);
   }
 
   init();

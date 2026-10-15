@@ -761,46 +761,21 @@
      "pointerdown 目标与 pointerup 目标的最近公共祖先"（也就是容器本身），
      e.target 不再是按钮，closest('.filter-btn') 永远为 null → 按钮点不动。
      挂在 window 上既能拖出容器继续跟随，又不影响 click 的目标。 */
-  function onSliderDragMove(e) {
-    if (!dragState || e.pointerId !== dragState.id) return;
-    var dx = e.clientX - dragState.x;
-    if (Math.abs(dx) > 4) dragMoved = true;
-    if (dragMoved) {
-      stopAutoScroll();
-      filterEl.scrollLeft = dragState.left - dx;
-    }
-  }
+  /* 判定"拖拽"的水平位移阈值。
+     这里必须给足余量：真实鼠标/触控板在"按下→抬起"之间几乎一定会抖几像素，
+     阈值太小（原来是 4px）会把普通点击误判成拖拽，于是 click 被吞掉
+     → 表现就是"genre 按钮点不动"（实测抖动 5px 就必然点不动）。
+     筛选条总宽 17000+px，想滚动至少也要拖 30px 以上，
+     所以 16px 既能放行所有正常点击，又不会误触发选中。 */
+  var DRAG_THRESHOLD = 16;
 
-  function onSliderDragEnd(e) {
-    if (!dragState) return;
-    if (e && e.pointerId !== undefined && e.pointerId !== dragState.id) return;
-    var moved = dragMoved;
-    dragState = null;
-    filterEl.classList.remove('active');
-    window.removeEventListener('pointermove', onSliderDragMove);
-    window.removeEventListener('pointerup', onSliderDragEnd);
-    window.removeEventListener('pointercancel', onSliderDragEnd);
-    if (moved) setTimeout(function () { dragMoved = false; }, 300);
-  }
-
-  filterEl.addEventListener('pointerdown', function (e) {
-    if (e.pointerType !== 'mouse' || e.button !== 0) return;   // 触屏走原生滚动
-    dragMoved = false;
-    dragState = { id: e.pointerId, x: e.clientX, left: filterEl.scrollLeft };
-    filterEl.classList.add('active');
-    measureSlider();
-    window.addEventListener('pointermove', onSliderDragMove);
-    window.addEventListener('pointerup', onSliderDragEnd);
-    window.addEventListener('pointercancel', onSliderDragEnd);
-  });
-
-  filterEl.addEventListener('pointermove', function (e) {
-    if (e.pointerType !== 'mouse') return;
-    if (dragState) return;   // 拖拽中由 window 上的 onSliderDragMove 处理
-
-    // 边缘自动滚动
+  /* 边缘自动滚动：**只在按住拖动到边缘时**触发。
+     绝对不能只靠"悬停"触发 —— 之前鼠标只要移到边缘 70px 内（不按任何键）
+     筛选条就会自己滚 400+px/秒，用户瞄准的按钮会从光标底下溜走，
+     表现出来就是"genre 点不到"。 */
+  function updateEdgeAutoScroll(clientX) {
     if (!sliderRect) measureSlider();
-    var mx = e.clientX - sliderRect.left;
+    var mx = clientX - sliderRect.left;
     var th = 70;
     if (mx < th) {
       startAutoScroll(-(1 - mx / th) * 9);
@@ -809,6 +784,45 @@
     } else {
       stopAutoScroll();
     }
+  }
+
+  function onSliderDragMove(e) {
+    if (!dragState || e.pointerId !== dragState.id) return;
+    var totalDx = e.clientX - dragState.x0;
+    if (!dragMoved && Math.abs(totalDx) > DRAG_THRESHOLD) dragMoved = true;
+    if (!dragMoved) { dragState.lastX = e.clientX; return; }
+
+    /* 用"相对上一次位置的增量"滚动，而不是"绝对位移映射到绝对位置"。
+       这样它和边缘自动滚动（同样在改 scrollLeft）可以叠加，不会互相覆盖。 */
+    var step = dragState.lastX - e.clientX;
+    dragState.lastX = e.clientX;
+    if (step) filterEl.scrollLeft += step;
+    updateEdgeAutoScroll(e.clientX);
+  }
+
+  function onSliderDragEnd(e) {
+    if (!dragState) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== dragState.id) return;
+    dragState = null;
+    stopAutoScroll();
+    filterEl.classList.remove('active');
+    window.removeEventListener('pointermove', onSliderDragMove);
+    window.removeEventListener('pointerup', onSliderDragEnd);
+    window.removeEventListener('pointercancel', onSliderDragEnd);
+    /* 不再用 setTimeout 延时清 dragMoved：
+       下一次 pointerdown 本来就会把它重置为 false，延时清除是多余的，
+       反而会在主线程卡顿时让"拖拽"的 click 漏过去、误选一个 genre。 */
+  }
+
+  filterEl.addEventListener('pointerdown', function (e) {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;   // 触屏走原生滚动
+    dragMoved = false;
+    dragState = { id: e.pointerId, x0: e.clientX, lastX: e.clientX };
+    filterEl.classList.add('active');
+    measureSlider();
+    window.addEventListener('pointermove', onSliderDragMove);
+    window.addEventListener('pointerup', onSliderDragEnd);
+    window.addEventListener('pointercancel', onSliderDragEnd);
   });
 
   filterEl.addEventListener('pointerleave', stopAutoScroll);
